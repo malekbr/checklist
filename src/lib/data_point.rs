@@ -1,6 +1,12 @@
 use std::collections::{btree_map, BTreeMap};
 use std::iter::Peekable;
 
+use pest::Parser;
+
+#[derive(Parser)]
+#[grammar = "../parser/template.pest"]
+pub struct TemplateParser;
+
 pub enum DataPoint {
     Primitive(String),
     List(Vec<DataPoint>),
@@ -166,28 +172,18 @@ struct TemplatePath(Vec<TemplatePathPart>);
 #[derive(PartialEq, Debug)]
 pub struct ObjectAccess(Vec<String>);
 
-#[derive(PartialEq, Debug)]
-pub enum ParseError {
-    InvalidObjectAccess(String),
-    EmptyObjectAccess,
-}
-
 impl ObjectAccess {
-    pub fn parse(string: &str) -> Result<Self, ParseError> {
-        if string.is_empty() {
-            return Err(ParseError::EmptyObjectAccess);
-        }
-        string.chars().try_for_each(|c| {
-            if c.is_whitespace() {
-                Err(ParseError::InvalidObjectAccess(String::from(string)))
-            } else {
-                Ok(())
-            }
-        })?;
+    pub fn parse(string: &str) -> Result<Self, pest::error::Error<Rule>> {
+        let mut result = TemplateParser::parse(Rule::group_name, string)?;
         Ok(ObjectAccess(
-            string
-                .split('.')
-                .map(|string| String::from(string))
+            result
+                .next()
+                .unwrap()
+                .into_inner()
+                .map(|pair| match pair.as_rule() {
+                    Rule::ident => String::from(pair.as_str()),
+                    rule => panic!("Bug in grammar, object access {:?}", rule),
+                })
                 .collect(),
         ))
     }
@@ -202,6 +198,7 @@ struct TodoLine(Vec<TodoLinePart>);
 
 enum TodoTemplate {
     Line(TodoLine),
+    Comment(TodoLine),
     Loop(ObjectAccess, Vec<TodoTemplate>),
 }
 
@@ -216,7 +213,7 @@ mod tests {
 
     #[test]
     fn test_object_access() {
-        assert_eq!(ObjectAccess::parse(""), Err(ParseError::EmptyObjectAccess));
+        assert!(ObjectAccess::parse("").is_err());
         assert_eq!(
             ObjectAccess::parse("test"),
             Ok(ObjectAccess(vec![String::from("test")]))
@@ -227,7 +224,7 @@ mod tests {
         );
         assert_eq!(
             ObjectAccess::parse("test. hello"),
-            Err(ParseError::InvalidObjectAccess("test. hello".to_string()))
+            Ok(ObjectAccess(vec!["test".to_string(), "hello".to_string()]))
         );
         assert_eq!(
             ObjectAccess::parse("مرحبا"),

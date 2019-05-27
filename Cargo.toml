@@ -5,3 +5,5 @@ authors = ["Malek Ben Romdhane <malekbr@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+pest="2.1.1"
+pest_derive="2.1.0"

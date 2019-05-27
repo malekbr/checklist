@@ -1,0 +1,26 @@
+group_seperator = _{ "." }
+ident = @{ (LETTER|NUMBER|SYMBOL|CONNECTOR_PUNCTUATION|DASH_PUNCTUATION)+ }
+group_name = { (ident ~ group_seperator)* ~ ident }
+WHITESPACE = _{ WHITE_SPACE }
+group = { "{" ~ group_name ~ "}" }
+indent_generic = _{(!NEWLINE ~ WHITE_SPACE)*}
+indentation = @{ indent_generic }
+ignored_indent = _{indent_generic}
+item_begin = _{ "-" }
+loop_begin = _{ "@" }
+comment_begin = _{ ">" }
+instruction_begin = ${ indentation ~ (item_begin | comment_begin | loop_begin) }
+end_of_line = _{(NEWLINE | EOI)}
+// If empty_line didn't check for EOI, causes infinite loop
+empty_line = @{ !EOI ~ (indentation ~ end_of_line) }
+end_of_rule = @{ &(NEWLINE ~ (instruction_begin | empty_line)) | EOI  }
+escaped_brace = @{"{{"}
+raw_text_no_escape = @{(!(end_of_rule | "{") ~ ANY)+}
+raw_text = ${ (escaped_brace | raw_text_no_escape)+ }
+fillable_text = ${(raw_text | group)+}
+comment_text = @{ (!end_of_rule ~ ANY)+ }
+comment = ${indentation ~ comment_begin ~ ignored_indent ~ fillable_text ~ &end_of_rule ~ end_of_line}
+item = ${indentation ~ item_begin ~ignored_indent ~ fillable_text ~ &end_of_rule ~ end_of_line}
+loop_vars = !{ident ~ group}
+loop_spec = ${indentation ~ loop_begin ~ ignored_indent ~ loop_vars ~ end_of_line}
+rules = ${SOI ~ (item | loop_spec | comment | empty_line)* ~ EOI}
