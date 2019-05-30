@@ -199,14 +199,76 @@ struct TodoLine(Vec<TodoLinePart>);
 enum TodoTemplate {
     Line(TodoLine),
     Comment(TodoLine),
-    Loop(ObjectAccess, Vec<TodoTemplate>),
+    Loop(String, ObjectAccess, Vec<TodoTemplate>),
 }
 
-struct Template {
-    requires: Fillable,
+enum Lines {
+    Line(TodoLine),
+    Comment(TodoLine),
+    Loop(String, ObjectAccess, Vec<TodoTemplate>),
+}
+
+pub struct Template {
     templates: Vec<TodoTemplate>,
     fillables: BTreeMap<String, Fillable>,
 }
+
+struct WithIndentation<T> {
+    indentation: String,
+    body: T,
+}
+
+impl<T> WithIndentation<T> {
+    fn new(indentation: &str, body: T) -> Self {
+        WithIndentation {
+            indentation: indentation.to_owned(),
+            body,
+        }
+    }
+}
+
+fn compute_indent_str(indentation: &str) -> usize {
+    indentation.chars().fold(0, |i, char| match char {
+        ' ' => i + 1,
+        '\t' => {
+            let next = i + 8;
+            next - (next % 8)
+        }
+        _ => panic!("Unexpected character in indentation {}", char),
+    })
+}
+
+fn compute_indent(indentation: &pest::iterators::Pair<Rule>) -> usize {
+    match indentation.as_rule() {
+        Rule::indentation => (),
+        rule => panic!("compute_indent got a non indentation: {:?}", rule),
+    }
+    compute_indent_str(indentation.as_str())
+}
+
+impl Template {
+    fn parse_comment(comment: pest::iterators::Pair<Rule>) -> () {
+        let mut parts = comment.into_inner();
+        let indentation = parts.next().unwrap().as_str();
+        let comment = parts.next().unwrap();
+        let result = WithIndentation::new(indentation, comment);
+    }
+    pub fn parse(string: &str) -> Result<(), pest::error::Error<Rule>> {
+        let mut result = TemplateParser::parse(Rule::rules, string)?;
+        // let mut values = vec![vec![]];
+        result
+            .next()
+            .unwrap()
+            .into_inner()
+            .for_each(|pair| match pair.as_rule() {
+                Rule::comment => Template::parse_comment(pair),
+                _ => println!("other"),
+            });
+        println!("{:?}", result);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,5 +299,17 @@ mod tests {
                 "بكم".to_string()
             ]))
         );
+    }
+
+    #[test]
+    fn test_compute_indent_str() {
+        assert_eq!(compute_indent_str(""), 0);
+        assert_eq!(compute_indent_str(" "), 1);
+        assert_eq!(compute_indent_str("\t"), 8);
+        assert_eq!(compute_indent_str(" \t"), 8);
+        assert_eq!(compute_indent_str("   \t \t"), 16);
+        assert_eq!(compute_indent_str("   \t\t"), 16);
+        assert_eq!(compute_indent_str("       \t"), 8);
+        assert_eq!(compute_indent_str("        \t"), 16);
     }
 }
