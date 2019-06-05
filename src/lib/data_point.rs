@@ -246,6 +246,143 @@ fn compute_indent(indentation: &pest::iterators::Pair<Rule>) -> usize {
     compute_indent_str(indentation.as_str())
 }
 
+type Pair = String;
+
+#[derive(Debug)]
+enum Indentation {
+    MoreThan(Pair, usize),
+    Exactly(Pair, usize),
+    TopLevel,
+}
+
+#[derive(Debug)]
+enum Either<A, B> {
+    Left(A),
+    Right(B),
+}
+
+// TODO: rewrite
+#[derive(Debug)]
+struct Structured {
+    indentation: Indentation,
+    children: Vec<Either<Pair, Box<Structured>>>,
+}
+
+impl Structured {
+    fn collapse(
+        values: &mut Vec<Self>,
+        pos: pest::Position,
+    ) -> Result<(), pest::error::Error<Rule>> {
+        let latest = values.last_mut().unwrap();
+        match &latest.indentation {
+            Indentation::TopLevel => (),
+            Indentation::MoreThan(_, _) => {
+                let error = pest::error::Error::new_from_pos(
+                    pest::error::ErrorVariant::CustomError {
+                        message: String::from("Empty loop"),
+                    },
+                    pos,
+                );
+                return Err(error);
+            }
+            Indentation::Exactly(_, _) => {
+                let latest = values.pop().unwrap();
+                values
+                    .last_mut()
+                    .unwrap()
+                    .children
+                    .push(Either::Right(Box::new(latest)));
+                return Structured::collapse(values, pos);
+            }
+        };
+        Ok(())
+    }
+    fn update_indent(
+        values: &mut Vec<Self>,
+        element: &pest::iterators::Pair<Rule>,
+        indent: usize,
+    ) -> Result<(), pest::error::Error<Rule>> {
+        let latest = values.last_mut().unwrap();
+        let error = pest::error::Error::new_from_pos(
+            pest::error::ErrorVariant::CustomError {
+                message: String::from("Unexpected indentation"),
+            },
+            element.as_span().start_pos(),
+        );
+        match &latest.indentation {
+            Indentation::TopLevel => {
+                if indent > 0 {
+                    return Err(error);
+                }
+            }
+            Indentation::MoreThan(pair, size) => {
+                if indent > *size {
+                    latest.indentation = Indentation::Exactly(pair.to_owned(), indent);
+                } else {
+                    return Err(error);
+                }
+            }
+            Indentation::Exactly(_, size) => {
+                if indent < *size {
+                    let latest = values.pop().unwrap();
+                    values
+                        .last_mut()
+                        .unwrap()
+                        .children
+                        .push(Either::Right(Box::new(latest)));
+                    return Structured::update_indent(values, element, indent);
+                } else if indent > *size {
+                    return Err(error);
+                }
+            }
+        };
+        Ok(())
+    }
+    fn update_indent_loop_spec(
+        values: &mut Vec<Self>,
+        element: pest::iterators::Pair<Rule>,
+        indent: usize,
+    ) -> Result<(), pest::error::Error<Rule>> {
+        Structured::update_indent(values, &element, indent)?;
+        values.push(Structured {
+            indentation: Indentation::MoreThan(element.as_str().to_owned(), indent),
+            children: vec![],
+        });
+        Ok(())
+    }
+
+    fn update_indent_item(
+        values: &mut Vec<Self>,
+        element: pest::iterators::Pair<Rule>,
+        indent: usize,
+    ) -> Result<(), pest::error::Error<Rule>> {
+        Structured::update_indent(values, &element, indent)?;
+        values
+            .last_mut()
+            .unwrap()
+            .children
+            .push(Either::Left(element.as_str().to_owned()));
+        Ok(())
+    }
+
+    fn print(&self, indent: usize) {
+        let indent_string = std::iter::repeat(' ').take(indent).collect::<String>();
+        let indent = match &self.indentation {
+            Indentation::TopLevel => 0,
+            Indentation::Exactly(pair, indent) => {
+                println!("{}|{}", indent_string, pair);
+                *indent
+            }
+            Indentation::MoreThan(_, _) => panic!("Unexpected more than"),
+        };
+        let indent_string = std::iter::repeat(' ').take(indent).collect::<String>();
+        self.children.iter().for_each(|child| match child {
+            Either::Left(pair) => println!("{}|{}", indent_string, pair),
+            Either::Right(value) => value.print(indent),
+        });
+    }
+}
+
 impl Template {
     fn parse_comment(comment: pest::iterators::Pair<Rule>) -> () {
         let mut parts = comment.into_inner();
@@ -253,18 +390,39 @@ impl Template {
         let comment = parts.next().unwrap();
         let result = WithIndentation::new(indentation, comment);
     }
+
+    fn get_indent(comment: pest::iterators::Pair<Rule>) -> (usize, pest::iterators::Pair<Rule>) {
+        let mut parts = comment.into_inner();
+        let indentation = compute_indent(&parts.next().unwrap());
+        let comment = parts.next().unwrap();
+        (indentation, comment)
+    }
+
     pub fn parse(string: &str) -> Result<(), pest::error::Error<Rule>> {
         let mut result = TemplateParser::parse(Rule::rules, string)?;
-        // let mut values = vec![vec![]];
-        result
-            .next()
-            .unwrap()
-            .into_inner()
-            .for_each(|pair| match pair.as_rule() {
-                Rule::comment => Template::parse_comment(pair),
-                _ => println!("other"),
-            });
-        println!("{:?}", result);
+        let mut values = vec![Structured {
+            indentation: Indentation::TopLevel,
+            children: vec![],
+        }];
+        let pair = result.next().unwrap();
+        let mut pos = pair.as_span().start_pos();
+        pair.into_inner()
+            .try_for_each(|pair| match pair.as_rule() {
+                Rule::comment | Rule::item => {
+                    let (indentation, node) = Template::get_indent(pair);
+                    Structured::update_indent_item(&mut values, node, indentation)
+                }
+                Rule::loop_spec => {
+                    let (indentation, node) = Template::get_indent(pair);
+                    pos = node.as_span().start_pos();
+                    Structured::update_indent_loop_spec(&mut values, node, indentation)
+                }
+                Rule::EOI => Ok(()),
+                _ => panic!("Unexpected rule: {:?}", pair.as_rule()),
+            })?;
+        Structured::collapse(&mut values, pos)?;
+        let structure = values.pop().unwrap();
+        structure.print(0);
         Ok(())
     }
 }

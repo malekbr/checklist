@@ -1,0 +1,10 @@
+> We're going to contact the clients to tell them about the promotion.
+- Create spreadsheet {spreadsheet.name} using template {spreadsheet.template}.
+> We're going to contact the clients to tell them about the promotion.
+@ client {clients}
+  > We're going to contact {client.name} from {client.company.name}.
+He's a {client.priority}-priority client.
+  - Call {client.name} at number {client.number}.
+  - Give client information about promotion {client.available-promotion}.
+  - Record purchase info in sheet {client.sheet}.
+- When done, send spreadsheet to {spreadsheet-email}.
